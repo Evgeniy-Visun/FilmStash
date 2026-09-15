@@ -1,0 +1,22 @@
+# Secrets - never commit these
+.env
+Credentials.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Tooling / editors
+.vscode/
+.idea/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS noise
+.DS_Store
+Thumbs.db
