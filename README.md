@@ -78,6 +78,7 @@ filmstash-bot/
 ├── main.py            # The bot (async, fully commented)
 ├── schema.sql         # Supabase table + indexes + RLS
 ├── requirements.txt   # Python dependencies
+├── render.yaml        # Render Blueprint (one-click deploy)
 ├── .env.example       # Template for your secrets
 └── README.md
 ```
@@ -179,8 +180,120 @@ python main.py
 
 On macOS/Linux use `source .venv/bin/activate` instead.
 
-You should see `Starting FilmStash bot…` and then `Application started`. Open
-your bot in Telegram and send `/start`.
+You should see `Starting FilmStash bot in POLLING mode (no WEBHOOK_URL set)…`
+and then `Application started`. Open your bot in Telegram and send `/start`.
+
+---
+
+## Deploying to Render (webhook mode)
+
+Locally the bot uses **long polling**: it repeatedly asks Telegram "any new
+messages?". That needs no public URL, but it requires a process that stays
+alive forever. Render's free tier **spins a web service down after ~15 minutes
+of inactivity**, which kills a polling loop — and a sleeping bot cannot poll.
+
+The fix is **webhooks**: instead of the bot asking Telegram, Telegram pushes
+each update to a public HTTPS URL that Render hosts. The bot then only needs to
+answer HTTP requests, which is exactly what a web service is for.
+
+The same [`main.py`](main.py:1) supports both. **The mode is chosen purely from
+the environment**: set `WEBHOOK_URL` and the bot serves webhooks; leave it unset
+and it polls. No code changes, no flags.
+
+### How the pieces fit together
+
+```
+Telegram  ──HTTPS POST──►  https://filmstash.onrender.com/telegram/webhook
+                                        │
+                            Render edge (TLS termination)
+                                        │  plain HTTP
+                                        ▼
+                            0.0.0.0:10000  (your container)
+                                        │
+                                    main.py
+```
+
+| Variable | Value | Why |
+|---|---|---|
+| `WEBHOOK_URL` | `https://filmstash.onrender.com` | Public base URL. **Setting this is what enables webhook mode.** No trailing slash, no path. |
+| `PORT` | `10000` | Render injects this and routes public traffic to it. The bot reads `PORT` automatically; `10000` is the fallback. |
+| `WEBHOOK_LISTEN` | `0.0.0.0` | Bind all interfaces so Render's router can reach the process. `127.0.0.1` would be unreachable. |
+| `WEBHOOK_PATH` | `/telegram/webhook` | The route Telegram POSTs to. Non-obvious on purpose. |
+| `WEBHOOK_SECRET` | *(random string)* | Optional but recommended. Telegram sends it in a header; the bot rejects mismatches. |
+
+> ⚠️ Telegram **only** delivers to HTTPS. An `http://` `WEBHOOK_URL` is rejected
+> at startup with a clear message rather than a cryptic API error.
+
+### Option A — Blueprint (recommended)
+
+[`render.yaml`](render.yaml:1) is already in the repo.
+
+1. Push this branch to GitHub.
+2. Render Dashboard → **New** → **Blueprint** → select the repo.
+3. Render reads [`render.yaml`](render.yaml:1) and prompts for the secrets
+   marked `sync: false`: `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL`, `SUPABASE_KEY`,
+   `TMDB_API_KEY`, `WEBHOOK_SECRET`.
+4. Click **Apply**. Render builds and starts the service.
+
+### Option B — Manual web service
+
+1. Render Dashboard → **New** → **Web Service** → connect the repo.
+2. **Runtime:** Python 3 · **Build Command:** `pip install -r requirements.txt`
+   · **Start Command:** `python main.py`
+3. Add the environment variables from the table above, plus the four secrets
+   from [Setup](#4-configure-the-environment).
+4. Deploy.
+
+### Generating a webhook secret
+
+```cmd
+.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Paste the output into `WEBHOOK_SECRET` on Render.
+
+### Verifying the webhook is registered
+
+Ask Telegram what it currently has for your bot (replace the token):
+
+```cmd
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
+```
+
+A healthy response looks like:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "url": "https://filmstash.onrender.com/telegram/webhook",
+    "has_custom_certificate": false,
+    "pending_update_count": 0
+  }
+}
+```
+
+If `url` is empty, `WEBHOOK_URL` is not set on Render. If
+`last_error_message` is present, it names the cause (usually a 502 while the
+service was still booting, or a path mismatch).
+
+### Switching back to polling
+
+Delete the `WEBHOOK_URL` variable on Render (or leave it blank locally) and
+restart. The bot logs `POLLING mode` and calls `getUpdates` again. Telegram
+drops the webhook automatically once polling starts.
+
+> ⚠️ **Never run polling and webhooks at the same time.** Two instances
+> consuming the same bot's updates produce
+> `Conflict: terminated by other getUpdates request`. If you deploy to Render,
+> stop any local `python main.py` that is still running.
+
+### Free-tier caveat
+
+Render's free web services sleep after ~15 minutes idle. The first message
+after a sleep can take ~30–60 seconds while the container boots, and Telegram
+will retry the delivery. This is expected; the update is not lost. A paid
+instance (or an external uptime pinger) removes the cold start.
 
 ---
 
@@ -248,6 +361,11 @@ Telegram  ──►  main.py  ──►  TMDB API      (poster, score, plot)
 | Bot silent | Check the token, and that only one instance is polling. |
 | `Conflict: terminated by other getUpdates request` | A second bot instance is polling. Kill stray `python.exe` processes. |
 | `RuntimeError: There is no current event loop in thread 'MainThread'` | See below. |
+| `WEBHOOK_URL must start with https://` | Telegram only delivers to HTTPS. Fix the value on Render. |
+| `getWebhookInfo` shows an empty `url` | `WEBHOOK_URL` is not set on the host, so the bot is polling. |
+| Webhook returns 502 on Render | The service was still booting. Telegram retries; check the Render logs. |
+| Webhook returns 403 | `WEBHOOK_SECRET` on Render does not match the registered webhook. |
+| Bot replies twice | Two instances are running (e.g. Render **and** a local `python main.py`). |
 
 ### `RuntimeError: There is no current event loop in thread 'MainThread'`
 
