@@ -13,11 +13,33 @@ services:
     runtime: python
     plan: free
     region: frankfurt          # pick the region closest to your users
+
+    # The branch this service builds. Render reads THIS FILE from the branch it
+    # is deploying, so if you point it at a branch that does not contain
+    # render.yaml, none of the env vars below are applied and the bot falls back
+    # to polling - which opens no port and fails Render's port scan with:
+    #     Port scan timeout reached, no open ports detected.
+    #
+    # Normal workflow: develop on a feature branch, merge into main, and let
+    # Render redeploy main automatically. Do not point this at a feature branch
+    # unless you intend to change it back.
     branch: main
+
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    healthCheckPath: /
+
+    # The bot serves exactly one route: WEBHOOK_PATH (/telegram/webhook). A
+    # health check against "/" would return 404 and Render would mark a
+    # perfectly healthy deploy as unhealthy, so point it at the real route.
+    healthCheckPath: /telegram/webhook
+
     autoDeploy: true
+
+    # Create a temporary, fully isolated service for every pull request, built
+    # from that PR's branch with the same env vars. This is how you test a
+    # feature branch on Render WITHOUT repointing the main service. The preview
+    # is destroyed when the PR is merged or closed.
+    previewsEnabled: true
     envVars:
       # --- Secrets: set these in the Render dashboard, never in this file ----
       # `sync: false` tells Render to prompt for the value on first deploy and

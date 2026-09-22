@@ -366,6 +366,44 @@ Telegram  ──►  main.py  ──►  TMDB API      (poster, score, plot)
 | Webhook returns 502 on Render | The service was still booting. Telegram retries; check the Render logs. |
 | Webhook returns 403 | `WEBHOOK_SECRET` on Render does not match the registered webhook. |
 | Bot replies twice | Two instances are running (e.g. Render **and** a local `python main.py`). |
+| `Port scan timeout reached, no open ports detected` | The bot started in **polling** mode, which opens no port. See below. |
+
+### `Port scan timeout reached, no open ports detected`
+
+Render could not find a listening port, so it killed the deploy. This means the
+bot started in **polling** mode instead of webhook mode — polling makes only
+outbound calls and never binds a port.
+
+Confirm it in the Render **Logs** tab. You will see:
+
+```
+Starting FilmStash bot in POLLING mode (no WEBHOOK_URL set)…
+```
+
+That line is printed only when `WEBHOOK_URL` is empty, so the cause is always
+one of these two:
+
+**1. `WEBHOOK_URL` is not set on the service.** Go to **Environment** and add it:
+
+```
+WEBHOOK_URL = https://filmstash.onrender.com
+```
+
+**2. Render is building a branch that has no `render.yaml`.** This is the
+subtle one. Render reads [`render.yaml`](render.yaml:1) *from the branch it is
+deploying*. If that branch does not contain the file, none of the Blueprint's
+env vars are applied — including `WEBHOOK_URL` — and the bot silently falls back
+to polling.
+
+Check the **branch** shown on the service. If you deployed before merging the
+webhook work, the service may be building `main`, which at that point had no
+webhook code at all. Fix it by merging the feature branch into `main` (Render
+then redeploys automatically), or by setting `branch:` in
+[`render.yaml`](render.yaml:16) to the branch that has the code.
+
+> 💡 To test a feature branch without repointing the main service, use
+> `previewsEnabled: true` in [`render.yaml`](render.yaml:1). Render then builds a
+> temporary service per pull request and destroys it on merge.
 
 ### `RuntimeError: There is no current event loop in thread 'MainThread'`
 
