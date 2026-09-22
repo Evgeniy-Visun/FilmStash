@@ -380,8 +380,8 @@ Confirm it in the Render **Logs** tab. You will see:
 Starting FilmStash bot in POLLING mode (no WEBHOOK_URL set)…
 ```
 
-That line is printed only when `WEBHOOK_URL` is empty, so the cause is always
-one of these two:
+That line is printed only when `WEBHOOK_URL` is empty, so the cause is one of
+these three:
 
 **1. `WEBHOOK_URL` is not set on the service.** Go to **Environment** and add it:
 
@@ -389,11 +389,32 @@ one of these two:
 WEBHOOK_URL = https://filmstash.onrender.com
 ```
 
-**2. Render is building a branch that has no `render.yaml`.** This is the
-subtle one. Render reads [`render.yaml`](render.yaml:1) *from the branch it is
-deploying*. If that branch does not contain the file, none of the Blueprint's
-env vars are applied — including `WEBHOOK_URL` — and the bot silently falls back
-to polling.
+**2. The service was created manually, so `render.yaml` is ignored.** This is
+the most common cause. Render only reads [`render.yaml`](render.yaml:1) for
+services it provisions from a **Blueprint** (Dashboard → **New** → **Blueprint**).
+If you created the service with **New** → **Web Service** and picked the repo and
+branch yourself, the file is never read and **none** of its `envVars` are
+applied — including `WEBHOOK_URL`. The code is correct, the file is correct, and
+the variable still never arrives.
+
+Tell the two apart in the dashboard: a Blueprint-managed service shows a
+**Blueprint** link and its env vars are marked as managed. A manual service shows
+only the env vars you typed in yourself.
+
+Fix it either way:
+
+- **Keep the manual service** and add the variables by hand under
+  **Environment**. At minimum `WEBHOOK_URL`; add `WEBHOOK_SECRET` too if you want
+  the secret-token check. `PORT` is injected by Render automatically.
+- **Or recreate it as a Blueprint** so [`render.yaml`](render.yaml:1) manages the
+  env vars for you. Delete the manual service first, then **New** → **Blueprint**
+  → pick the repo. Render reads `render.yaml` from `main` and prompts for the
+  `sync: false` secrets.
+
+**3. Render is building a branch that has no `render.yaml`.** Render reads
+[`render.yaml`](render.yaml:1) *from the branch it is deploying*. If that branch
+does not contain the file, none of the Blueprint's env vars are applied — and the
+bot silently falls back to polling.
 
 Check the **branch** shown on the service. If you deployed before merging the
 webhook work, the service may be building `main`, which at that point had no
@@ -403,7 +424,8 @@ then redeploys automatically), or by setting `branch:` in
 
 > 💡 To test a feature branch without repointing the main service, use
 > `previewsEnabled: true` in [`render.yaml`](render.yaml:1). Render then builds a
-> temporary service per pull request and destroys it on merge.
+> temporary service per pull request and destroys it on merge. Note this only
+> applies to Blueprint-managed services.
 
 ### `RuntimeError: There is no current event loop in thread 'MainThread'`
 
