@@ -60,6 +60,46 @@ SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL")
 SUPABASE_KEY: Optional[str] = os.getenv("SUPABASE_KEY")
 TMDB_API_KEY: Optional[str] = os.getenv("TMDB_API_KEY")
 
+# --- Webhook / hosting ------------------------------------------------------
+# Two run modes are supported:
+#
+#   * POLLING (default, local development) - the bot calls Telegram's
+#     getUpdates in a loop. No public URL needed. This is what `python main.py`
+#     does on your machine.
+#
+#   * WEBHOOK (production, e.g. Render) - Telegram pushes each update to a
+#     public HTTPS endpoint that we host. This is required on hosts that do not
+#     allow a long-lived outbound polling loop, and it is the recommended mode
+#     for Render.
+#
+# Webhook mode activates automatically when WEBHOOK_URL is set, so the same
+# code runs locally and in production with no flags to remember.
+WEBHOOK_URL: Optional[str] = os.getenv("WEBHOOK_URL")
+
+# The port the HTTP server binds to. Render injects PORT at runtime and routes
+# its public HTTPS traffic to it, so we must honour it. 10000 is Render's
+# documented default and the fallback used when PORT is unset.
+PORT: int = int(os.getenv("PORT", "10000"))
+
+# The interface to bind. 0.0.0.0 is required inside a container/host so the
+# platform's router can reach the process; 127.0.0.1 would only accept
+# connections from inside the same machine.
+WEBHOOK_LISTEN = os.getenv("WEBHOOK_LISTEN", "0.0.0.0")
+
+# The URL path Telegram will POST updates to. Keeping it non-obvious means a
+# random internet scanner cannot easily hit the endpoint. It must start with a
+# slash and must match the path appended to WEBHOOK_URL.
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/telegram/webhook")
+
+# Optional shared secret. When set, Telegram sends it in the
+# X-Telegram-Bot-Api-Secret-Token header and python-telegram-bot rejects any
+# request whose header does not match. This is the recommended way to stop
+# strangers from POSTing fake updates to your public endpoint.
+WEBHOOK_SECRET: Optional[str] = os.getenv("WEBHOOK_SECRET")
+
+# True when a public URL is configured, i.e. we should run in webhook mode.
+WEBHOOK_ENABLED: bool = bool(WEBHOOK_URL)
+
 # TMDB REST endpoints. `search/movie` finds candidates; `movie/{id}` is used
 # when we need the full record for a specific id.
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
@@ -641,6 +681,24 @@ def validate_config() -> None:
             + "\nCopy .env.example to .env and fill in the values."
         )
 
+    # --- Webhook sanity checks --------------------------------------------
+    # Telegram refuses to register a webhook that is not HTTPS, so catching a
+    # plain-http WEBHOOK_URL here turns a confusing API error at startup into a
+    # clear message. Render always serves HTTPS, so this only trips on a typo.
+    if WEBHOOK_ENABLED and not WEBHOOK_URL.startswith("https://"):
+        raise SystemExit(
+            f"WEBHOOK_URL must start with https:// (got {WEBHOOK_URL!r}). "
+            "Telegram only delivers updates to HTTPS endpoints."
+        )
+
+    if WEBHOOK_ENABLED and not WEBHOOK_PATH.startswith("/"):
+        raise SystemExit(
+            f"WEBHOOK_PATH must start with '/' (got {WEBHOOK_PATH!r})."
+        )
+
+    if WEBHOOK_ENABLED and not 1 <= PORT <= 65535:
+        raise SystemExit(f"PORT must be between 1 and 65535 (got {PORT}).")
+
     # Warn early if the wrong Supabase key type is configured. The `anon` key is
     # subject to Row Level Security, and schema.sql deliberately enables RLS
     # with no permissive policies, so every write would fail with error 42501.
@@ -690,15 +748,51 @@ def build_application() -> Application:
 
 
 def main() -> None:
-    """Entry point: validate config, build the app, start long polling."""
+    """
+    Entry point: validate config, build the app, then start either the webhook
+    server (production) or the long-polling loop (local development).
+
+    The mode is chosen purely from the environment: set WEBHOOK_URL and the bot
+    serves Telegram's updates over HTTPS; leave it unset and the bot polls.
+    """
     validate_config()
 
-    logger.info("Starting FilmStash bot…")
     application = build_application()
 
-    # run_polling blocks and manages its own asyncio loop. `drop_pending_updates`
-    # discards messages that arrived while the bot was offline, which avoids a
-    # burst of stale commands on restart.
+    if WEBHOOK_ENABLED:
+        # --- Webhook mode (Render and other PaaS hosts) --------------------
+        # `drop_pending_updates` discards messages that arrived while the bot
+        # was offline, avoiding a burst of stale commands on each deploy.
+        #
+        # `listen`/`port` bind the internal HTTP server. Render terminates TLS
+        # at its edge and forwards plain HTTP to this port, so we bind 0.0.0.0
+        # on the injected PORT and let Render handle HTTPS.
+        #
+        # `url_path` is the local route; `webhook_url` is the full public URL
+        # Telegram is told to POST to. They must agree on the path, which is why
+        # both are derived from WEBHOOK_PATH.
+        logger.info(
+            "Starting FilmStash bot in WEBHOOK mode on %s:%s%s (public: %s%s)…",
+            WEBHOOK_LISTEN,
+            PORT,
+            WEBHOOK_PATH,
+            WEBHOOK_URL,
+            WEBHOOK_PATH,
+        )
+        application.run_webhook(
+            listen=WEBHOOK_LISTEN,
+            port=PORT,
+            url_path=WEBHOOK_PATH,
+            webhook_url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+            secret_token=WEBHOOK_SECRET,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
+        return
+
+    # --- Polling mode (local development) ---------------------------------
+    # run_polling blocks and manages its own asyncio loop.
+    logger.info("Starting FilmStash bot in POLLING mode (no WEBHOOK_URL set)…")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,

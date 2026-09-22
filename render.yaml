@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# Render Blueprint for FilmStash Bot
+#
+# Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# Render reads this file and provisions the service below.
+#
+# Docs: https://render.com/docs/blueprint-spec
+# ---------------------------------------------------------------------------
+
+services:
+  - type: web
+    name: filmstash
+    runtime: python
+    plan: free
+    region: frankfurt          # pick the region closest to your users
+
+    # The branch this service builds. Render reads THIS FILE from the branch it
+    # is deploying, so if you point it at a branch that does not contain
+    # render.yaml, none of the env vars below are applied and the bot falls back
+    # to polling - which opens no port and fails Render's port scan with:
+    #     Port scan timeout reached, no open ports detected.
+    #
+    # Normal workflow: develop on a feature branch, merge into main, and let
+    # Render redeploy main automatically. Do not point this at a feature branch
+    # unless you intend to change it back.
+    branch: main
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+
+    # The bot serves exactly one route: WEBHOOK_PATH (/telegram/webhook). A
+    # health check against "/" would return 404 and Render would mark a
+    # perfectly healthy deploy as unhealthy, so point it at the real route.
+    healthCheckPath: /telegram/webhook
+
+    autoDeploy: true
+
+    # Create a temporary, fully isolated service for every pull request, built
+    # from that PR's branch with the same env vars. This is how you test a
+    # feature branch on Render WITHOUT repointing the main service. The preview
+    # is destroyed when the PR is merged or closed.
+    previewsEnabled: true
+    envVars:
+      # --- Secrets: set these in the Render dashboard, never in this file ----
+      # `sync: false` tells Render to prompt for the value on first deploy and
+      # keep it out of version control.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+
+      # --- Webhook configuration --------------------------------------------
+      # Setting WEBHOOK_URL switches the bot from polling to webhook mode.
+      # Replace the hostname if your Render service gets a different name.
+      - key: WEBHOOK_URL
+        value: https://filmstash.onrender.com
+
+      # Render injects PORT itself; this is only a documented fallback.
+      - key: PORT
+        value: 10000
+
+      # Bind all interfaces so Render's router can reach the process.
+      - key: WEBHOOK_LISTEN
+        value: 0.0.0.0
+
+      # Non-obvious path so random scanners cannot hit the endpoint.
+      - key: WEBHOOK_PATH
+        value: /telegram/webhook
+
+      # Keep Python from buffering logs, so output appears in Render in real time.
+      - key: PYTHONUNBUFFERED
+        value: "1"
