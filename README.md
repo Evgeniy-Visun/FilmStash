@@ -17,6 +17,7 @@ Each user's library is private — every query is scoped by the Telegram numeric
 | `/add <Title> <Rating>` | Looks the title up on TMDB, saves it, replies with a poster card. |
 | `/list` | The 10 most recent movies **you** logged. |
 | `/search <Title>` | Checks whether **you** already logged a movie and shows your rating + plot. |
+| `/remove <Title>` | Deletes a movie from **your** stash (case-insensitive exact title match). |
 
 ---
 
@@ -34,6 +35,7 @@ Each person's library is isolated automatically:
 | They send `/add Inception 9` | Stored under **their** Telegram ID. |
 | They send `/list` | Shows only **their** movies. |
 | They send `/search Inception` | Finds only **their** entry. |
+| They send `/remove Inception` | Deletes only **their** entry. |
 | You send `/list` | Your library is unaffected by their activity. |
 
 ### The security boundary
@@ -304,10 +306,12 @@ instance (or an external uptime pinger) removes the cold start.
 /add Blade Runner 2049 10
 /list
 /search Inception
+/remove The Matrix
 ```
 
 The rating is always the **last** token, so multi-word titles work without
-quotes.
+quotes. `/remove` takes the whole title as its argument, so multi-word titles
+work there too.
 
 ---
 

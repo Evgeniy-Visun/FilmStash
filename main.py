@@ -364,6 +364,37 @@ def db_find_movie(user_id: int, title: str) -> Optional[dict[str, Any]]:
     return rows[0] if rows else None
 
 
+def db_delete_movie(user_id: int, title: str) -> list[dict[str, Any]]:
+    """
+    Delete every entry for this user whose title matches (case insensitive,
+    exact) and return the deleted rows.
+
+    Deleting *all* matching rows is deliberate: the table is a history log, so
+    a user may have logged the same title more than once. `/remove` means
+    "take this movie out of my stash", which is the whole set, not one row.
+
+    The `.eq("user_id", user_id)` filter is the multi-user isolation boundary -
+    without it this call would delete other users' rows. It is never optional.
+
+    Returns an empty list when nothing matched, so the caller can tell the
+    difference between "removed" and "you never logged this".
+    """
+    client = _require_supabase()
+    try:
+        response = (
+            client.table("movies")
+            .delete()
+            .eq("user_id", user_id)          # <-- multi-user isolation
+            .ilike("title", title)           # case-insensitive exact match
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Supabase delete failed.")
+        raise ExternalServiceError("Could not update your library right now.") from exc
+
+    return response.data or []
+
+
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
@@ -421,7 +452,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "    <i>Example:</i> <code>/add The Matrix 9</code>\n"
         "• <code>/list</code> — show your 10 most recent entries.\n"
         f"• <code>/search {PLACEHOLDER_TITLE}</code> — check if you already logged a movie.\n"
-        "    <i>Example:</i> <code>/search Inception</code>\n\n"
+        "    <i>Example:</i> <code>/search Inception</code>\n"
+        f"• <code>/remove {PLACEHOLDER_TITLE}</code> — delete a movie from your stash.\n"
+        "    <i>Example:</i> <code>/remove The Matrix</code>\n\n"
         "Ratings are on a <b>1–10</b> scale. Your library is private to your "
         "Telegram account."
     )
@@ -582,6 +615,78 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
+async def cmd_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /remove <Title> - delete this user's entry (or entries) for a movie.
+
+    The title is the whole argument list, so multi-word titles work without
+    quoting. Matching is case-insensitive and exact, mirroring /search, so a
+    user can confirm what they are about to delete with /search first.
+    """
+    message = update.message
+    user = update.effective_user
+    if message is None or user is None:
+        return
+
+    title = " ".join(context.args or []).strip()
+    if not title:
+        await message.reply_text(
+            f"⚠️ <b>Usage:</b> <code>/remove {PLACEHOLDER_TITLE}</code>\n"
+            "Example: <code>/remove The Matrix</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # --- 1. Confirm the movie is actually in this user's stash -------------
+    # Doing the lookup first lets us give a precise "not found" message and
+    # avoids a delete that silently affects zero rows.
+    try:
+        existing = await asyncio.to_thread(db_find_movie, user.id, title)
+    except ExternalServiceError:
+        await message.reply_text(
+            "😕 I couldn't read your library right now. Please try again later."
+        )
+        return
+
+    if existing is None:
+        await message.reply_text(
+            f"🔍 You haven't logged <b>{_escape(title)}</b>, so there's nothing to remove.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # --- 2. Delete (off the event loop) ------------------------------------
+    try:
+        deleted = await asyncio.to_thread(db_delete_movie, user.id, title)
+    except ExternalServiceError:
+        await message.reply_text(
+            "😕 I couldn't update your library right now. Please try again later."
+        )
+        return
+
+    # The delete is scoped by user_id, so a non-empty result is guaranteed to
+    # be this user's data. Guard anyway in case the row vanished concurrently.
+    if not deleted:
+        await message.reply_text(
+            f"🔍 <b>{_escape(title)}</b> was already gone from your stash.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # --- 3. Confirm what was removed ---------------------------------------
+    # Report the canonical TMDB title from the deleted row, not the raw input,
+    # so the user sees exactly which movie left their library.
+    removed_title = deleted[0].get("title") or title
+    count = len(deleted)
+    extra = f" <i>({count} entries)</i>" if count > 1 else ""
+
+    await message.reply_text(
+        f"🗑️ <b>Removed from your stash</b>\n\n"
+        f"🎬 <b>{_escape(removed_title)}</b>{extra}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/search <Title> - has this user already logged the movie?"""
     message = update.message
@@ -732,11 +837,12 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("add", cmd_add))
     application.add_handler(CommandHandler("list", cmd_list))
     application.add_handler(CommandHandler("search", cmd_search))
+    application.add_handler(CommandHandler("remove", cmd_remove))
     # Catch-all for unknown slash commands.
     application.add_handler(
         CommandHandler(
             [
-                "help", "delete", "remove", "stats", "random", "top",
+                "help", "delete", "stats", "random", "top",
                 "export", "settings", "about",
             ],
             cmd_unknown,
