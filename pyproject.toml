@@ -63,7 +63,7 @@ strict_equality = true
 ignore_missing_imports = true
 
 # Only type-check the project's own modules.
-files = ["main.py"]
+files = ["main.py", "config.py", "handlers", "services", "utils"]
 
 # Third-party libraries without type information. Listing them explicitly keeps
 # the output quiet and documents *why* they are unchecked.

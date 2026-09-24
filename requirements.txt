@@ -3,14 +3,14 @@
 # Install with:  pip install -r requirements.txt
 # ---------------------------------------------------------------------------
 
-# Telegram Bot framework (async, v20+). Provides Application, CommandHandler,
-# MessageHandler and the async event loop integration.
+# Telegram Bot framework (async, v20+). The [webhooks] extra pulls in the
+# Tornado-based HTTP server used by run_webhook() in production.
 #
 # NOTE: 22.x is required on Python 3.13+. Older releases (<= 21.11) call the
 # deprecated asyncio.get_event_loop(), which Python 3.14 turned into a hard
 # RuntimeError, so the bot crashes on startup with:
 #     RuntimeError: There is no current event loop in thread 'MainThread'.
-python-telegram-bot==22.8
+python-telegram-bot[webhooks]==22.8
 
 # Official Supabase client. Wraps PostgREST + GoTrue and gives us the
 # `.table("movies").insert(...)` / `.select(...)` fluent API.
@@ -24,9 +24,10 @@ python-dotenv==1.0.1
 
 # ---------------------------------------------------------------------------
 # Transitive / helper dependencies (pinned for reproducible installs).
-# python-telegram-bot already requires httpx, but we pin it explicitly so the
-# async HTTP layer used by the bot does not drift between environments.
 # ---------------------------------------------------------------------------
+
+# Async HTTP layer used by python-telegram-bot. Pinned explicitly so it does
+# not drift between environments.
 httpx==0.27.2
 
 # REQUIRED for webhook mode (production / Render).

@@ -28,10 +28,11 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
 
-    # The bot serves exactly one route: WEBHOOK_PATH (/telegram/webhook). A
-    # health check against "/" would return 404 and Render would mark a
-    # perfectly healthy deploy as unhealthy, so point it at the real route.
-    healthCheckPath: /telegram/webhook
+    # The bot serves exactly one route: /<TELEGRAM_BOT_TOKEN>. A health check
+    # against "/" would return 404 and Render would mark a perfectly healthy
+    # deploy as unhealthy. Render cannot interpolate the token into this field,
+    # so point the check at the root and rely on the port scan instead.
+    healthCheckPath: /
 
     autoDeploy: true
 
@@ -68,10 +69,6 @@ services:
       # Bind all interfaces so Render's router can reach the process.
       - key: WEBHOOK_LISTEN
         value: 0.0.0.0
-
-      # Non-obvious path so random scanners cannot hit the endpoint.
-      - key: WEBHOOK_PATH
-        value: /telegram/webhook
 
       # Keep Python from buffering logs, so output appears in Render in real time.
       - key: PYTHONUNBUFFERED

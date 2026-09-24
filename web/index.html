@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>FilmStash — Dashboard</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #1a1d24;
+      --accent: #f5c518;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --border: #2a2e37;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header { text-align: center; margin-bottom: 20px; }
+    header h1 { margin: 0; font-size: 1.5rem; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+    }
+    .stat .value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+    .stat .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .movie {
+      display: flex;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .movie img {
+      width: 64px;
+      height: 96px;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #222;
+      flex-shrink: 0;
+    }
+    .movie .meta { flex: 1; min-width: 0; }
+    .movie .title { font-weight: 600; margin-bottom: 4px; }
+    .movie .ratings { font-size: 0.85rem; color: var(--muted); }
+    .movie .plot {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 6px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+    .error { color: #ff6b6b; text-align: center; padding: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎬 FilmStash</h1>
+    <p id="greeting">Your personal movie library</p>
+  </header>
+
+  <section class="stats">
+    <div class="stat">
+      <div class="value" id="stat-count">—</div>
+      <div class="label">Movies</div>
+    </div>
+    <div class="stat">
+      <div class="value" id="stat-avg">—</div>
+      <div class="label">Avg rating</div>
+    </div>
+  </section>
+
+  <main id="library">
+    <div class="empty">Loading your stash…</div>
+  </main>
+
+  <script>
+    // Telegram Mini App bootstrap. When opened outside Telegram the object is
+    // absent, so every access is guarded.
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      const user = tg.initDataUnsafe?.user;
+      if (user?.first_name) {
+        document.getElementById("greeting").textContent =
+          `Welcome back, ${user.first_name}`;
+      }
+    }
+
+    // NOTE: the dashboard is a static shell. Wiring it to live data requires a
+    // backend endpoint that validates Telegram initData and queries Supabase
+    // with the user's Telegram id. Until that endpoint exists, render the
+    // empty state so the Mini App never shows a broken screen.
+    function renderEmpty() {
+      document.getElementById("stat-count").textContent = "0";
+      document.getElementById("stat-avg").textContent = "—";
+      document.getElementById("library").innerHTML =
+        '<div class="empty">📭 Your stash is empty.<br>Add movies with /add in the bot.</div>';
+    }
+
+    renderEmpty();
+  </script>
+</body>
+</html>

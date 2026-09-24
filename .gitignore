@@ -10,6 +10,11 @@ __pycache__/
 venv/
 env/
 
+# Agent / tooling state
+.agents/
+.roo/
+skills-lock.json
+
 # Tooling / editors
 .vscode/
 .idea/

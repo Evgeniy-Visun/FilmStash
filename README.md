@@ -13,7 +13,8 @@ Each user's library is private — every query is scoped by the Telegram numeric
 
 | Command | Description |
 |---|---|
-| `/start` | Welcome message and usage help. |
+| `/start` | Welcome message, usage help, and a button to open the Mini App dashboard. |
+| `/help` | Alias for `/start`. |
 | `/add <Title> <Rating>` | Looks the title up on TMDB, saves it, replies with a poster card. |
 | `/list` | The 10 most recent movies **you** logged. |
 | `/search <Title>` | Checks whether **you** already logged a movie and shows your rating + plot. |
@@ -21,69 +22,57 @@ Each user's library is private — every query is scoped by the Telegram numeric
 
 ---
 
-## Multiple users
-
-The bot is **multi-user out of the box**. Share its link
-(`https://t.me/YourBotUsername`) and anyone can use it — no code changes, no
-extra configuration.
-
-Each person's library is isolated automatically:
-
-| Action | What happens |
-|---|---|
-| Someone else sends `/start` | They get the welcome message. |
-| They send `/add Inception 9` | Stored under **their** Telegram ID. |
-| They send `/list` | Shows only **their** movies. |
-| They send `/search Inception` | Finds only **their** entry. |
-| They send `/remove Inception` | Deletes only **their** entry. |
-| You send `/list` | Your library is unaffected by their activity. |
-
-### The security boundary
-
-Because the bot connects with the `service_role` key, **the bot's code is the
-security boundary** — not the database. Isolation depends entirely on every
-query filtering by `user_id`.
-
-> ⚠️ **When adding new commands:** never query the `movies` table without a
-> `.eq("user_id", user_id)` clause. A single missing filter would expose one
-> user's library to another.
-
-### Adding a non-Telegram client (web / mobile / CLI)
-
-If you later want a second client talking to the same database, do **not** give
-it the `service_role` key. Use the `anon` key with RLS policies instead:
-
-```sql
-create policy "users read own movies"
-    on public.movies for select
-    to authenticated
-    using (auth.uid() = user_id);
-
-create policy "users insert own movies"
-    on public.movies for insert
-    to authenticated
-    with check (auth.uid() = user_id);
-```
-
-The complication: these policies compare against Supabase's `auth.uid()`, but
-`user_id` currently holds a **Telegram** ID. Bridging the two identity systems
-requires a mapping table and a way to authenticate Telegram users against
-Supabase. That is the main design problem to solve before adding a second
-client — the policies themselves are the easy part.
-
----
-
 ## Project layout
 
 ```
 filmstash-bot/
-├── main.py            # The bot (async, fully commented)
-├── schema.sql         # Supabase table + indexes + RLS
-├── requirements.txt   # Python dependencies
-├── render.yaml        # Render Blueprint (one-click deploy)
-├── .env.example       # Template for your secrets
-└── README.md
+├── main.py                  # Entry point (App init + webhook/polling runner)
+├── config.py                # Environment loading & validation
+├── requirements.txt         # Runtime dependencies
+├── requirements-dev.txt     # Dev-only tooling (ruff, mypy)
+├── render.yaml              # Render Blueprint (one-click deploy)
+├── schema.sql               # Supabase table + indexes + RLS
+├── .env.example             # Template for your secrets
+├── README.md
+│
+├── handlers/                # Telegram command and callback handlers
+│   ├── __init__.py          # Exports `register_all_handlers(app)`
+│   ├── start.py             # /start, /help, main menu with Mini App button
+│   ├── movies.py            # /add, /list, /search, /remove
+│   └── callbacks.py         # Inline keyboard handling & pagination
+│
+├── services/                # Data and external API abstraction layer
+│   ├── __init__.py
+│   ├── supabase_client.py   # Supabase CRUD for movies
+│   └── tmdb_client.py       # TMDB API calls (posters, ratings, plots)
+│
+├── web/                     # Mini App / Web Dashboard static frontend
+│   └── index.html           # Single-page web dashboard
+│
+└── utils/                   # Helper utilities
+    ├── __init__.py
+    └── formatters.py        # Card formatting, rating stars, Markdown/HTML builders
 ```
+
+### Architecture
+
+```
+Telegram ──► handlers/ ──► services/ ──► TMDB API
+                 │              │
+                 │              └──────► Supabase (movies table)
+                 │
+                 └──► utils/formatters.py  (presentation)
+```
+
+- **`config.py`** is the single source of truth for environment variables. It
+  loads `.env`, parses `PORT` (default `10000`), and exposes
+  `validate_config()` which fails fast on missing secrets.
+- **`services/`** owns every external call. Handlers never build Supabase
+  queries or TMDB requests directly.
+- **`handlers/`** stay lean: read input → call a service → format → reply.
+- **`utils/`** turns raw data into Telegram-ready HTML.
+- **Import direction is one-way:** `handlers → services → config`. `services`
+  never imports `handlers`, so there are no circular imports.
 
 ---
 
@@ -150,12 +139,6 @@ If you see that error, jump to [Setup step 3](#3-create-the-supabase-database).
 > ⚠️ The `service_role` key bypasses Row Level Security. Keep it server-side
 > only — never ship it in a browser or mobile app.
 
-> 💡 Make sure the `SUPABASE_URL` points at the **same project** where you ran
-> the SQL. The project ref is the subdomain, e.g.
-> `https://abcdefghijklm.supabase.co` → project `abcdefghijklm`. Running the
-> schema in one project and pointing the bot at another produces the exact same
-> `PGRST205` error.
-
 ### 4. Configure the environment
 
 ```cmd
@@ -205,7 +188,7 @@ and it polls. No code changes, no flags.
 ### How the pieces fit together
 
 ```
-Telegram  ──HTTPS POST──►  https://filmstash.onrender.com/telegram/webhook
+Telegram  ──HTTPS POST──►  https://filmstash.onrender.com/<TELEGRAM_BOT_TOKEN>
                                         │
                             Render edge (TLS termination)
                                         │  plain HTTP
@@ -215,12 +198,14 @@ Telegram  ──HTTPS POST──►  https://filmstash.onrender.com/telegram/web
                                     main.py
 ```
 
+The webhook path is the bot token itself, so the endpoint is unguessable and
+`url_path` / `webhook_url` can never drift apart.
+
 | Variable | Value | Why |
 |---|---|---|
 | `WEBHOOK_URL` | `https://filmstash.onrender.com` | Public base URL. **Setting this is what enables webhook mode.** No trailing slash, no path. |
 | `PORT` | `10000` | Render injects this and routes public traffic to it. The bot reads `PORT` automatically; `10000` is the fallback. |
 | `WEBHOOK_LISTEN` | `0.0.0.0` | Bind all interfaces so Render's router can reach the process. `127.0.0.1` would be unreachable. |
-| `WEBHOOK_PATH` | `/telegram/webhook` | The route Telegram POSTs to. Non-obvious on purpose. |
 | `WEBHOOK_SECRET` | *(random string)* | Optional but recommended. Telegram sends it in a header; the bot rejects mismatches. |
 
 > ⚠️ Telegram **only** delivers to HTTPS. An `http://` `WEBHOOK_URL` is rejected
@@ -268,7 +253,7 @@ A healthy response looks like:
 {
   "ok": true,
   "result": {
-    "url": "https://filmstash.onrender.com/telegram/webhook",
+    "url": "https://filmstash.onrender.com/<YOUR_TOKEN>",
     "has_custom_certificate": false,
     "pending_update_count": 0
   }
@@ -299,6 +284,20 @@ instance (or an external uptime pinger) removes the cold start.
 
 ---
 
+## Mini App dashboard
+
+[`web/index.html`](web/index.html:1) is a single-page dashboard that Telegram
+renders inside the client. `/start` attaches an `InlineKeyboardButton` with a
+`web_app` payload pointing at `WEBHOOK_URL`, so the button appears only when an
+HTTPS base URL is configured.
+
+The page is a **static shell**: it bootstraps `Telegram.WebApp`, greets the
+user, and renders an empty state. Wiring it to live data requires a backend
+endpoint that validates Telegram `initData` and queries Supabase with the
+user's Telegram id — see the note in the file.
+
+---
+
 ## Usage examples
 
 ```
@@ -316,12 +315,6 @@ work there too.
 ---
 
 ## How it works
-
-```
-Telegram  ──►  main.py  ──►  TMDB API      (poster, score, plot)
-                   │
-                   └──────►  Supabase      (movies table)
-```
 
 - **Async everywhere.** `python-telegram-bot` v20+ runs on `asyncio`. The
   blocking `requests` and `supabase` calls are dispatched with
@@ -393,17 +386,11 @@ these three:
 WEBHOOK_URL = https://filmstash.onrender.com
 ```
 
-**2. The service was created manually, so `render.yaml` is ignored.** This is
-the most common cause. Render only reads [`render.yaml`](render.yaml:1) for
-services it provisions from a **Blueprint** (Dashboard → **New** → **Blueprint**).
-If you created the service with **New** → **Web Service** and picked the repo and
-branch yourself, the file is never read and **none** of its `envVars` are
-applied — including `WEBHOOK_URL`. The code is correct, the file is correct, and
-the variable still never arrives.
-
-Tell the two apart in the dashboard: a Blueprint-managed service shows a
-**Blueprint** link and its env vars are marked as managed. A manual service shows
-only the env vars you typed in yourself.
+**2. The service was created manually, so `render.yaml` is ignored.** Render only
+reads [`render.yaml`](render.yaml:1) for services it provisions from a
+**Blueprint** (Dashboard → **New** → **Blueprint**). If you created the service
+with **New** → **Web Service**, the file is never read and **none** of its
+`envVars` are applied — including `WEBHOOK_URL`.
 
 Fix it either way:
 
@@ -411,25 +398,12 @@ Fix it either way:
   **Environment**. At minimum `WEBHOOK_URL`; add `WEBHOOK_SECRET` too if you want
   the secret-token check. `PORT` is injected by Render automatically.
 - **Or recreate it as a Blueprint** so [`render.yaml`](render.yaml:1) manages the
-  env vars for you. Delete the manual service first, then **New** → **Blueprint**
-  → pick the repo. Render reads `render.yaml` from `main` and prompts for the
-  `sync: false` secrets.
+  env vars for you.
 
 **3. Render is building a branch that has no `render.yaml`.** Render reads
 [`render.yaml`](render.yaml:1) *from the branch it is deploying*. If that branch
 does not contain the file, none of the Blueprint's env vars are applied — and the
 bot silently falls back to polling.
-
-Check the **branch** shown on the service. If you deployed before merging the
-webhook work, the service may be building `main`, which at that point had no
-webhook code at all. Fix it by merging the feature branch into `main` (Render
-then redeploys automatically), or by setting `branch:` in
-[`render.yaml`](render.yaml:16) to the branch that has the code.
-
-> 💡 To test a feature branch without repointing the main service, use
-> `previewsEnabled: true` in [`render.yaml`](render.yaml:1). Render then builds a
-> temporary service per pull request and destroys it on merge. Note this only
-> applies to Blueprint-managed services.
 
 ### `RuntimeError: There is no current event loop in thread 'MainThread'`
 
@@ -447,15 +421,7 @@ does this):
 .venv\Scripts\python.exe -m pip install --upgrade "python-telegram-bot>=22.0"
 ```
 
-Confirm your versions:
-
-```cmd
-.venv\Scripts\python.exe --version
-.venv\Scripts\python.exe -m pip show python-telegram-bot
-```
-
 You need **Python 3.10+** and **python-telegram-bot 22.x** on Python 3.13+.
-If you must stay on an older PTB, use Python 3.12 instead.
 
 ### `42501: new row violates row-level security policy for table "movies"`
 
@@ -473,18 +439,18 @@ bypasses RLS entirely.
 3. Replace `SUPABASE_KEY` in `.env`
 4. Restart the bot
 
-The bot now detects this at startup and logs a warning, so you'll see it before
+The bot detects this at startup and logs a warning, so you'll see it before
 the first `/add`:
 
 ```
-WARNING | filmstash | SUPABASE_KEY holds the 'anon' key. Row Level Security
-will block all reads and writes. Switch to the 'service_role' key.
+WARNING | filmstash.config | SUPABASE_KEY holds the 'anon' key. Row Level
+Security will block all reads and writes. Switch to the 'service_role' key.
 ```
 
 To check which key you have at any time:
 
 ```cmd
-.venv\Scripts\python.exe -c "import main; print(main._supabase_key_role())"
+.venv\Scripts\python.exe -c "import config; print(config.supabase_key_role())"
 ```
 
 > ⚠️ The `service_role` key bypasses all security. Keep it server-side only.
