@@ -43,4 +43,12 @@ httpx==0.27.2
 #
 # It is pinned here so webhook mode works on a clean install, e.g. Render's
 # `pip install -r requirements.txt`.
-tornado==6.4.2
+#
+# NOTE: the pin MUST stay within the range python-telegram-bot[webhooks] 22.8
+# declares for this extra, which is `tornado~=6.5` (i.e. >=6.5, <7.0). Pinning
+# an older 6.4.x release makes pip's resolver fail the whole install with:
+#     The user requested tornado==6.4.2
+#     python-telegram-bot[webhooks] 22.8 depends on tornado~=6.5; extra == "webhooks"
+#     ERROR: ResolutionImpossible
+# which is exactly what broke the Render build.
+tornado==6.5.2
