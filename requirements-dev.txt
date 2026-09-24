@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# FilmStash Bot - development-only dependencies
+#
+# These tools are NOT needed to run the bot and are intentionally kept out of
+# requirements.txt so production installs (e.g. Render) stay lean.
+#
+# Install with:  pip install -r requirements-dev.txt
+# ---------------------------------------------------------------------------
+
+# Linter + formatter. Replaces flake8, isort and pyupgrade in one binary.
+ruff==0.13.2
+
+# Static type checker. The codebase is fully annotated, so this catches
+# type errors before they reach production.
+mypy==1.18.2
+
+# Type stubs for `requests`, which ships no inline annotations. Without this
+# mypy reports: Library stubs not installed for "requests" [import-untyped].
+types-requests==2.32.0.20241016

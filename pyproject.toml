@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# FilmStash Bot - tooling configuration
+#
+# This file configures the *development* tools only (ruff, mypy). It is not a
+# packaging manifest: the bot is deployed by installing requirements.txt, so
+# runtime dependencies stay there and are deliberately NOT duplicated here.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Ruff - linter + formatter (replaces flake8, isort, pyupgrade, ...)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+# Match the interpreter the bot targets. Python 3.13+ is required by
+# python-telegram-bot 22.x (see requirements.txt).
+target-version = "py313"
+line-length = 88
+
+# Keep linting fast and predictable: only look at real source, never at
+# virtualenvs, build output or the local .agents tooling directory.
+extend-exclude = [".agents", ".venv", "venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Curated rule set:
+#   E/W  - pycodestyle errors and warnings
+#   F    - pyflakes (unused imports/variables, undefined names)
+#   I    - isort (import ordering)
+#   UP   - pyupgrade (modern syntax for the target version)
+#   B    - flake8-bugbear (likely bugs / surprising constructs)
+#   SIM  - flake8-simplify (redundant code)
+#   C4   - flake8-comprehensions
+#   RUF  - ruff-specific rules
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+
+# Rules that fight the existing, intentional style of this codebase.
+ignore = [
+    # Long explanatory comments and docstrings are a feature of this project;
+    # line-length is already enforced by the formatter.
+    "E501",
+]
+
+[tool.ruff.format]
+# Use double quotes, matching the existing source.
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# mypy - static type checker
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+
+# The codebase already uses `from __future__ import annotations` and full
+# annotations, so we can afford a reasonably strict baseline.
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+strict_equality = true
+
+# Do not fail the whole run because a third-party package ships no stubs.
+# Missing imports are reported as notes, not errors.
+ignore_missing_imports = true
+
+# Only type-check the project's own modules.
+files = ["main.py"]
+
+# Third-party libraries without type information. Listing them explicitly keeps
+# the output quiet and documents *why* they are unchecked.
+[[tool.mypy.overrides]]
+module = ["supabase.*", "telegram.*", "dotenv.*"]
+ignore_missing_imports = true
